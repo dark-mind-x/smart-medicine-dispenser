@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { ref, onValue, update, set } from "firebase/database";
+import { ref, onValue, update, set, remove } from "firebase/database";
 import {
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -14,7 +14,6 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  Bell,
   RefreshCw,
   ShieldAlert,
   Zap,
@@ -34,7 +33,9 @@ import {
   Lock,
   Mail,
   LayoutDashboard,
-  History
+  History,
+  Plus,
+  Trash2
 } from "lucide-react";
 
 export default function App() {
@@ -71,6 +72,7 @@ export default function App() {
 
   // Schedule Editor Modal States
   const [editingSlotKey, setEditingSlotKey] = useState(null);
+  const [isNewSlot, setIsNewSlot] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", time: "08:00", dose: "", active: true });
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
@@ -118,7 +120,11 @@ export default function App() {
 
     const unsubSched = onValue(schedRef, (snapshot) => {
       const data = snapshot.val();
-      if (data) setSchedules(data);
+      if (data) {
+        setSchedules(data);
+      } else {
+        setSchedules({});
+      }
     });
 
     return () => {
@@ -141,7 +147,13 @@ export default function App() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      setAuthError(err.message.replace("Firebase: ", ""));
+      if (err.code === "auth/unauthorized-domain") {
+        setAuthError(
+          `Domain "${window.location.hostname}" is not authorized. Add it in Firebase Console -> Authentication -> Settings -> Authorized domains.`
+        );
+      } else {
+        setAuthError(err.message.replace("Firebase: ", ""));
+      }
     }
   };
 
@@ -187,7 +199,9 @@ export default function App() {
     await set(ref(db, `schedules/${slotKey}/active`), !currentState);
   };
 
+  // Open Modal to Edit Existing Slot
   const openScheduleModal = (slotKey, slotData) => {
+    setIsNewSlot(false);
     setEditingSlotKey(slotKey);
     setEditForm({
       name: slotData.name || "",
@@ -197,6 +211,36 @@ export default function App() {
     });
   };
 
+  // Open Modal to Create Brand New Custom Slot
+  const handleAddCustomSlot = () => {
+    const existingKeys = Object.keys(schedules);
+    if (existingKeys.length >= 12) {
+      alert("Maximum of 12 custom daily slots reached.");
+      return;
+    }
+    const nextNum = existingKeys.length + 1;
+    const uniqueKey = `slot_${String(nextNum).padStart(2, "0")}_${Date.now().toString().slice(-3)}`;
+
+    setIsNewSlot(true);
+    setEditingSlotKey(uniqueKey);
+    setEditForm({
+      name: `Custom Dose #${nextNum}`,
+      time: "14:00",
+      dose: "1 Tablet",
+      active: true
+    });
+  };
+
+  // Delete Custom Slot
+  const handleDeleteSlot = async (slotKey) => {
+    if (Object.keys(schedules).length <= 1) {
+      alert("Please keep at least 1 schedule slot configured.");
+      return;
+    }
+    await remove(ref(db, `schedules/${slotKey}`));
+  };
+
+  // Save Edited or Newly Created Slot to Firebase
   const handleSaveSchedule = async (e) => {
     e.preventDefault();
     if (!editingSlotKey) return;
@@ -215,6 +259,13 @@ export default function App() {
       setIsSavingSchedule(false);
     }
   };
+
+  // Sorted Schedule Entries
+  const sortedSchedules = useMemo(() => {
+    return Object.entries(schedules).sort(([, a], [, b]) =>
+      (a.time || "00:00").localeCompare(b.time || "00:00")
+    );
+  }, [schedules]);
 
   // KPI Metrics
   const missedList = useMemo(
@@ -273,13 +324,13 @@ export default function App() {
               MedSafe Personal
             </h1>
             <p className="text-sm text-slate-400">
-              Sign in to manage pill schedules & monitor real-time ESP32 telemetry
+              Sign in to manage custom pill slots & monitor real-time ESP32 status
             </p>
           </div>
 
           {authError && (
-            <div className="p-3.5 bg-rose-950/80 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <div className="p-3.5 bg-rose-950/80 border border-rose-500/40 rounded-xl text-xs text-rose-200 flex items-start gap-2.5 leading-relaxed">
+              <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
               <span>{authError}</span>
             </div>
           )}
@@ -419,7 +470,7 @@ export default function App() {
                     MedSafe Personal
                   </h1>
                   <span className="hidden sm:inline-block px-2 py-0.5 bg-rose-500/10 border border-rose-500/30 text-rose-400 font-mono text-xs font-semibold rounded-md">
-                    v2.5 Cloud
+                    Multi-Slot Cloud
                   </span>
                 </div>
                 <p className="text-xs sm:text-sm text-slate-400">
@@ -518,7 +569,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* KPI Telemetry Cards (Always visible on Desktop, visible on 'dashboard' tab on Mobile) */}
+        {/* KPI Telemetry Cards */}
         <section
           className={`${
             activeTab === "dashboard" ? "grid" : "hidden md:grid"
@@ -564,17 +615,17 @@ export default function App() {
 
           <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-5">
             <div className="flex items-center justify-between text-slate-400 text-xs sm:text-sm font-semibold">
-              <span>Active Timers</span>
+              <span>Active Slots</span>
               <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
             </div>
             <div className="text-2xl sm:text-4xl font-extrabold text-white mt-2 font-mono">
-              {Object.values(schedules).filter((s) => s.active).length}
+              {Object.values(schedules).filter((s) => s.active).length} / {Object.keys(schedules).length}
             </div>
             <p className="text-[11px] sm:text-xs text-slate-400 mt-2">Synced to ESP32 RTC</p>
           </div>
         </section>
 
-        {/* Missed Dosages Spotlight (Visible on 'dashboard' tab on Mobile & always on Desktop) */}
+        {/* Missed Dosages Spotlight */}
         <section
           className={`${
             activeTab === "dashboard" ? "block" : "hidden md:block"
@@ -639,7 +690,7 @@ export default function App() {
 
         {/* Schedules & History Grid */}
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
-          {/* Interactive Schedule Manager */}
+          {/* Interactive Multi-Slot Schedule Manager */}
           <div
             className={`${
               activeTab === "schedules" || activeTab === "dashboard" ? "block" : "hidden md:block"
@@ -649,14 +700,20 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-rose-400" />
                 <h2 className="text-base sm:text-lg font-bold text-white">
-                  Pill Schedule Configuration
+                  Custom Pill Schedules
                 </h2>
               </div>
-              <span className="text-xs text-slate-400">Tap Edit to change</span>
+              <button
+                onClick={handleAddCustomSlot}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white rounded-xl text-xs font-bold transition shadow-md shadow-rose-600/20"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Slot</span>
+              </button>
             </div>
 
             <div className="space-y-3.5">
-              {Object.entries(schedules).map(([key, slot], idx) => (
+              {sortedSchedules.map(([key, slot], idx) => (
                 <div
                   key={key}
                   className="bg-slate-900/70 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 sm:p-5 space-y-4 transition-all"
@@ -681,13 +738,23 @@ export default function App() {
                   </div>
 
                   <div className="flex items-center justify-between pt-3 border-t border-slate-800/80 gap-2">
-                    <button
-                      onClick={() => openScheduleModal(key, slot)}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition"
-                    >
-                      <Edit3 className="w-3.5 h-3.5 text-rose-400" />
-                      <span>Edit Schedule</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => openScheduleModal(key, slot)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Edit</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleDeleteSlot(key)}
+                        title="Delete Slot"
+                        className="p-2 bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-400 rounded-xl transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
 
                     <button
                       onClick={() => handleToggleSchedule(key)}
@@ -862,7 +929,7 @@ export default function App() {
         </section>
       </div>
 
-      {/* Schedule Edit Modal */}
+      {/* Schedule Edit / Create Modal */}
       {editingSlotKey && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl">
@@ -870,7 +937,7 @@ export default function App() {
               <div className="flex items-center gap-2.5">
                 <Calendar className="w-5 h-5 text-rose-400" />
                 <h3 className="text-lg font-bold text-white">
-                  Edit {editingSlotKey === "slot_01" ? "Slot 1" : "Slot 2"} Schedule
+                  {isNewSlot ? "Add New Custom Slot" : "Edit Pill Schedule"}
                 </h3>
               </div>
               <button
@@ -889,7 +956,7 @@ export default function App() {
                   required
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  placeholder="e.g., Morning Medicine"
+                  placeholder="e.g., Afternoon Vitamin"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-rose-500"
                 />
               </div>
@@ -950,7 +1017,7 @@ export default function App() {
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-sm transition shadow-lg shadow-rose-600/25"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{isSavingSchedule ? "Saving..." : "Save Schedule"}</span>
+                  <span>{isSavingSchedule ? "Saving..." : "Save Slot"}</span>
                 </button>
               </div>
             </form>
